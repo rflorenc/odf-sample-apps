@@ -1,0 +1,31 @@
+# follow official documentation
+# these are the main objects needed
+# the obc will create a cm and a secret with all that is needed
+---
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: observ
+  namespace: open-cluster-management-observability
+spec:
+  generateBucketName: "observ-rgw"
+  storageClassName: openshift-storage.noobaa.io
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: thanos-object-storage
+  namespace: open-cluster-management-observability
+type: Opaque
+stringData:
+  thanos.yaml: |
+    type: s3
+    config:
+      bucket: {{ obc-bucket }}
+      endpoint: {{ obc-endpoint }}
+      insecure: false
+      signature_version2: false
+      access_key: {{ obc-access-key }}
+      secret_key: {{ obc-secret-key }}
+      http_config:
+        insecure_skip_verify: true

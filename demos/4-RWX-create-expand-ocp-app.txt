@@ -1,0 +1,258 @@
+This is for RWX file-uploader
+
+In this section the ocs-storagecluster-cephfs StorageClass will be used to create a RWX (ReadWriteMany) PVC that can be used by multiple pods at the same time. The application we will use is called File Uploader.
+
+== Create a new OCP application deployment using CephFS volume
+
+In this section the `ocs-storagecluster-cephfs` *StorageClass* will be used to
+create a RWX (ReadWriteMany) *PVC* that can be used by multiple pods at the
+same time. The application we will use is called `File Uploader`.
+
+Create a new project:
+
+
+----
+oc new-project my-shared-storage
+----
+
+Next deploy the example PHP application called `file-uploader`:
+
+
+----
+oc new-app openshift/php~https://github.com/christianh814/openshift-php-upload-demo --name=file-uploader
+----
+
+.Example Output:
+----
+--> Found image dc56c67 (13 days old) in image stream "openshift/php" under tag "7.4-ubi8" for "openshift/php"
+
+    Apache 2.4 with PHP 7.4
+    -----------------------
+    PHP 7.4 available as container is a base platform for building and running various PHP 7.4 applica
+tions and frameworks. PHP is an HTML-embedded scripting language. PHP attempts to make it easy for dev
+elopers to write dynamically generated web pages. PHP also offers built-in database integration for se
+veral commercial and non-commercial database management systems, so writing a database-enabled webpage
+ with PHP is fairly simple. The most common use of PHP coding is probably as a replacement for CGI scr
+ipts.
+
+    Tags: builder, php, php74, php-74
+
+    * A source build using source code from https://github.com/christianh814/openshift-php-upload-demo
+ will be created
+      * The resulting image will be pushed to image stream tag "file-uploader:latest"
+      * Use 'oc start-build' to trigger a new build
+
+--> Creating resources ...
+    imagestream.image.openshift.io "file-uploader" created
+    buildconfig.build.openshift.io "file-uploader" created
+    deployment.apps "file-uploader" created
+    service "file-uploader" created
+--> Success
+    Build scheduled, use 'oc logs -f buildconfig/file-uploader' to track its progress.
+    Application is not exposed. You can expose services to the outside world by executing one or more
+of the commands below:
+     'oc expose service/file-uploader'
+    Run 'oc status' to view your app.
+----
+
+Watch the build log and wait for the application to be deployed:
+
+
+----
+oc logs -f bc/file-uploader -n my-shared-storage
+----
+
+.Example Output:
+----
+Cloning "https://github.com/christianh814/openshift-php-upload-demo" ...
+        Commit: 288eda3dff43b02f7f7b6b6b6f93396ffdf34cb2 (trying to modularize)
+        Author: Christian Hernandez <christian.hernandez@yahoo.com>
+        Date:   Sun Oct 1 17:15:09 2017 -0700
+[...]
+---> Installing application source...
+=> sourcing 20-copy-config.sh ...
+---> 01:28:30     Processing additional arbitrary httpd configuration provided by s2i ...
+=> sourcing 00-documentroot.conf ...
+=> sourcing 50-mpm-tuning.conf ...
+=> sourcing 40-ssl-certs.sh ...
+STEP 9/9: CMD /usr/libexec/s2i/run
+COMMIT temp.builder.openshift.io/my-shared-storage/file-uploader-1:dba488e1
+time="2022-02-10T01:28:30Z" level=warning msg="Adding metacopy option, configured globally"
+Getting image source signatures
+[...]
+Writing manifest to image destination
+Storing signatures
+--> 5cda795d6e3
+Successfully tagged temp.builder.openshift.io/my-shared-storage/file-uploader-1:dba488e1
+5cda795d6e364fa0ec76f03db142107c3706601626fefb54b769aae428f57db8
+
+Pushing image image-registry.openshift-image-registry.svc:5000/my-shared-storage/file-uploader:latest
+...
+Getting image source signatures
+[...]
+Writing manifest to image destination
+Storing signatures
+Successfully pushed image-registry.openshift-image-registry.svc:5000/my-shared-storage/file-uploader@s
+ha256:f23cf3c630d6b546918f86c8f987dd25331b6c8593ca0936c97d6a45d05f23cc
+Push successful
+----
+
+The command prompt returns out of the tail mode once you see _Push successful_.
+
+NOTE: This use of the `new-app` command directly asked for application code to
+be built and did not involve a template. That is why it only created a *single
+Pod* deployment with a *Service* and no *Route*.
+
+Let's make our application production ready by exposing it via a `Route` and
+scale to 3 instances for high availability:
+
+
+----
+oc expose svc/file-uploader -n my-shared-storage
+----
+
+----
+oc scale --replicas=3 deploymentconfig/file-uploader -n my-shared-storage
+
+----
+
+----
+oc get pods -n my-shared-storage
+----
+
+You should have 3 `file-uploader` *Pods* in a few minutes. Repeat the command above
+until there are 3 `file-uploader` *Pods* in `Running` STATUS.
+
+[CAUTION]
+====
+Never attempt to store persistent data in a *Pod* that has no persistent
+volume associated with it. *Pods* and their containers are ephemeral by
+definition, and any stored data will be lost as soon as the *Pod* terminates
+for whatever reason.
+====
+
+We can fix this by providing shared persistent storage to this application.
+
+You can create a *PersistentVolumeClaim* and attach it into an application with
+the `oc set volume` command. Execute the following
+
+
+----
+oc set volume deploymentconfig/file-uploader --add --name=my-shared-storage \
+-t pvc --claim-mode=ReadWriteMany --claim-size=1Gi \
+--claim-name=my-shared-storage --claim-class=ocs-storagecluster-cephfs \
+--mount-path=/opt/app-root/src/uploaded \
+-n my-shared-storage
+----
+
+This command will:
+
+* create a *PersistentVolumeClaim*
+* update the *Deployment* to include a `volume` definition
+* update the *Deployment* to attach a `volumemount` into the specified
+  `mount-path`
+* cause a new deployment of the 3 application *Pods*
+
+For more information on what `oc set volume` is capable of, look at its help
+output with `oc set volume -h`. Now, let's look at the result of adding the
+volume:
+
+
+----
+oc get pvc -n my-shared-storage
+----
+
+.Sample Output:
+----
+NAME                STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS                AGE
+my-shared-storage   Bound    pvc-c34bb9db-43a7-4eca-bc94-0251d7128721   1Gi        RWX            ocs-storagecluster-cephfs   47s
+----
+
+Notice the `ACCESSMODE` being set to *RWX* (short for `ReadWriteMany`).
+
+All 3 `file-uploader`*Pods* are using the same *RWX* volume. Without this
+`ACCESSMODE`, OpenShift will not attempt to attach multiple *Pods* to the
+same *PersistentVolume* reliably. If you attempt to scale up deployments that
+are using *RWO* or `ReadWriteOnce` storage, the *Pods* will actually all
+become co-located on the same node.
+
+Now let's use the file uploader web application using your browser to upload
+new files.
+
+First, find the *Route* that has been created:
+
+
+----
+oc get route file-uploader -n my-shared-storage -o jsonpath --template="http://{.spec.host}{'\n'}"
+----
+
+This will return a route similar to this one:
+
+.Example Output:
+----
+http://file-uploader-my-shared-storage.apps.cluster-ocs4-abdf.ocs4-abdf.sandbox744.opentlc.com
+----
+
+Point your browser to the web application using your route above. *Your `route`
+will be different.*
+
+The web app simply lists all uploaded files and offers the ability to upload
+new ones as well as download the existing data. Right now there is
+nothing.
+
+Select an arbitrary file from your local machine and upload it to the app.
+
+.A simple PHP-based file upload tool
+image::images/ocs/uploader_screen_upload.png[]
+
+Once done click *_List uploaded files_* to see the list of all currently
+uploaded files.
+
+=== Expand CephFS based PVCs
+
+OpenShift 4.5 and later versions let you expand an existing *PVC* based on the
+`ocs-storagecluster-cephfs` *StorageClass*. This chapter walks you through the
+steps to perform a PVC expansion through the CLI.
+
+NOTE: All the other methods described for expanding a Ceph RBD based *PVC* are
+also available.
+
+The `my-shared-storage` *PVC* size is currently `1Gi`. Let's increase the size to `5Gi` using the *oc patch* command.
+
+
+----
+oc patch pvc my-shared-storage -n my-shared-storage --type json --patch  '[{ "op": "replace", "path": "/spec/resources/requests/storage", "value": "5Gi" }]'
+----
+.Example output:
+----
+persistentvolumeclaim/my-shared-storage patched
+----
+
+Now let's verify the RWX *PVC* has been expanded.
+
+
+----
+echo $(oc get pvc my-shared-storage -n my-shared-storage -o jsonpath='{.spec.resources.requests.storage}')
+----
+.Example output:
+----
+5Gi
+----
+
+
+----
+echo $(oc get pvc my-shared-storage -n my-shared-storage -o jsonpath='{.status.capacity.storage}')
+----
+.Example output:
+----
+5Gi
+----
+
+Repeat both commands until output values are identical.
+
+NOTE: CephFS based RWX *PVC* resizing, as opposed to RBD based *PVCs*, is
+almost instantaneous. This is due to the fact that resizing such PVC does not
+involved resizing a filesystem but simply involves updating a quota for the
+mounted filesystem.
+
+CAUTION: Reducing the size of a CephFS *PVC* is NOT supported.

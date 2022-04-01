@@ -1,0 +1,48 @@
+apiVersion: v1
+items:
+- apiVersion: operators.coreos.com/v1alpha1
+  kind: Subscription
+  metadata:
+    labels:
+      operators.coreos.com/mcg-operator.openshift-storage: ""
+    name: mcg-operator-stable-4.9-redhat-operators-openshift-marketplace
+    namespace: openshift-storage
+  spec:
+    channel: stable-4.9
+    installPlanApproval: Automatic
+    name: mcg-operator
+    source: redhat-operators
+    sourceNamespace: openshift-marketplace
+    startingCSV: mcg-operator.v4.9.4
+- apiVersion: operators.coreos.com/v1alpha1
+  kind: Subscription
+  metadata:
+    labels:
+      operators.coreos.com/ocs-operator.openshift-storage: ""
+    name: ocs-operator-stable-4.9-redhat-operators-openshift-marketplace
+    namespace: openshift-storage
+  spec:
+    channel: stable-4.9
+    installPlanApproval: Automatic
+    name: ocs-operator
+    source: redhat-operators
+    sourceNamespace: openshift-marketplace
+    startingCSV: ocs-operator.v4.9.4
+- apiVersion: operators.coreos.com/v1alpha1
+  kind: Subscription
+  metadata:
+    labels:
+      operators.coreos.com/odf-operator.openshift-storage: ""
+    name: odf-operator
+    namespace: openshift-storage
+  spec:
+    channel: stable-4.9
+    installPlanApproval: Automatic
+    name: odf-operator
+    source: redhat-operators
+    sourceNamespace: openshift-marketplace
+    startingCSV: odf-operator.v4.9.4
+kind: List
+metadata:
+  resourceVersion: ""
+  selfLink: ""

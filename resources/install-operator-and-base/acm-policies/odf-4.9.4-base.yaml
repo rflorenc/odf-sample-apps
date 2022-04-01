@@ -1,0 +1,152 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+ annotations:
+   policy.open-cluster-management.io/categories: CM Configuration Management
+   policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+   policy.open-cluster-management.io/standards: NIST SP 800-53
+ name: policy-odf-operator
+spec:
+ disabled: false
+ policy-templates:
+   - objectDefinition:
+       apiVersion: policy.open-cluster-management.io/v1
+       kind: ConfigurationPolicy
+       metadata:
+         name: policy-odf-namespace
+       spec:
+         object-templates:
+           - complianceType: musthave
+             objectDefinition:
+               apiVersion: v1
+               kind: Namespace
+               metadata:
+                 labels:
+                   openshift.io/cluster-monitoring: "true"
+                 name: openshift-storage
+         remediationAction: inform
+         severity: high
+   - objectDefinition:
+       apiVersion: policy.open-cluster-management.io/v1
+       kind: ConfigurationPolicy
+       metadata:
+         name: policy-odf-operator-operatorgroup
+       spec:
+         object-templates:
+           - complianceType: musthave
+             objectDefinition:
+              apiVersion: operators.coreos.com/v1
+              kind: OperatorGroup
+              metadata:
+                annotations:
+                  olm.providedAPIs: ""
+                name: openshift-storage-operatorgroup
+                namespace: openshift-storage
+              spec:
+                targetNamespaces:
+                - openshift-storage
+         remediationAction: inform
+         severity: high
+   - objectDefinition:
+       apiVersion: policy.open-cluster-management.io/v1
+       kind: ConfigurationPolicy
+       metadata:
+         name: policy-odf-operator-subscription
+       spec:
+         object-templates:
+           - complianceType: musthave
+             objectDefinition:
+              apiVersion: operators.coreos.com/v1alpha1
+              kind: Subscription
+              metadata:
+                labels:
+                  operators.coreos.com/odf-operator.openshift-storage: ""
+                name: odf-operator
+                namespace: openshift-storage
+              spec:
+                channel: stable-4.9
+                installPlanApproval: Automatic
+                name: odf-operator
+                source: redhat-operators
+                sourceNamespace: openshift-marketplace
+                startingCSV: odf-operator.v4.9.4
+         remediationAction: inform
+         severity: high
+   - objectDefinition:
+       apiVersion: policy.open-cluster-management.io/v1
+       kind: ConfigurationPolicy
+       metadata:
+         name: policy-ocs-operator-subscription
+       spec:
+         object-templates:
+           - complianceType: musthave
+             objectDefinition:
+              apiVersion: operators.coreos.com/v1alpha1
+              kind: Subscription
+              metadata:
+                labels:
+                  operators.coreos.com/ocs-operator.openshift-storage: ""
+                name: ocs-operator-stable-4.9-redhat-operators-openshift-marketplace
+                namespace: openshift-storage
+              spec:
+                channel: stable-4.9
+                installPlanApproval: Automatic
+                name: ocs-operator
+                source: redhat-operators
+                sourceNamespace: openshift-marketplace
+                startingCSV: ocs-operator.v4.9.4
+       remediationAction: inform
+       severity: high
+   - objectDefinition:
+       apiVersion: policy.open-cluster-management.io/v1
+       kind: ConfigurationPolicy
+       metadata:
+         name: policy-mcg-operator-subscription
+       spec:
+         object-templates:
+           - complianceType: musthave
+             objectDefinition:
+              apiVersion: operators.coreos.com/v1alpha1
+              kind: Subscription
+              metadata:
+                labels:
+                  operators.coreos.com/mcg-operator.openshift-storage: ""
+                name: mcg-operator-stable-4.9-redhat-operators-openshift-marketplace
+                namespace: openshift-storage
+              spec:
+                channel: stable-4.9
+                installPlanApproval: Automatic
+                name: mcg-operator
+                source: redhat-operators
+                sourceNamespace: openshift-marketplace
+                startingCSV: mcg-operator.v4.9.4
+         remediationAction: inform
+         severity: high
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+ name: binding-policy-odf-operator
+placementRef:
+ apiGroup: apps.open-cluster-management.io
+ kind: PlacementRule
+ name: placement-policy-odf-operator
+subjects:
+ - apiGroup: policy.open-cluster-management.io
+   kind: Policy
+   name: policy-odf-operator
+---
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+ name: placement-policy-odf-operator
+spec:
+ clusterConditions:
+   - status: 'True'
+     type: ManagedClusterConditionAvailable
+ clusterSelector:
+   matchExpressions:
+     - key: environment
+       operator: In
+       values:
+         - odf

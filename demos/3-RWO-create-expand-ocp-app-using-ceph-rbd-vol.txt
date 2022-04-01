@@ -1,0 +1,420 @@
+This is for RWO PostgreSQL + Rails
+
+
+== Create a new OCP application deployment using Ceph RBD volume
+
+In this section the `ocs-storagecluster-ceph-rbd` *StorageClass* will be used
+by an OCP application + database *Deployment* to create RWO (ReadWriteOnce)
+persistent storage. The persistent storage will be a Ceph RBD (RADOS Block
+Device) volume in the Ceph pool `ocs-storagecluster-cephblockpool`.
+
+
+Make sure that you completed all previous sections so that you are ready to
+start the Rails + PostgreSQL *Deployment*.
+
+Start by creating a new project:
+
+
+----
+oc new-project my-database-app
+----
+
+Then use the `rails-pgsql-persistent` template to create the new application.
+
+
+----
+oc new-app -f 3-RWO-ocslab_rails-app.yaml -p STORAGE_CLASS=ocs-storagecluster-ceph-rbd -p VOLUME_CAPACITY=5Gi
+----
+
+After the deployment is started you can monitor with these commands.
+
+
+----
+oc status
+----
+
+Check the PVC is created.
+
+
+----
+oc get pvc -n my-database-app
+----
+
+This step could take 5 or more minutes. Wait until there are 2 *Pods* in
+`Running` STATUS and 4 *Pods* in `Completed` STATUS as shown below.
+
+
+----
+watch oc get pods -n my-database-app
+----
+.Example output:
+----
+NAME                                READY   STATUS      RESTARTS   AGE
+postgresql-1-deploy                 0/1     Completed   0          5m48s
+postgresql-1-lf7qt                  1/1     Running     0          5m40s
+rails-pgsql-persistent-1-build      0/1     Completed   0          5m49s
+rails-pgsql-persistent-1-deploy     0/1     Completed   0          3m36s
+rails-pgsql-persistent-1-hook-pre   0/1     Completed   0          3m28s
+rails-pgsql-persistent-1-pjh6q      1/1     Running     0          3m14s
+----
+
+You can exit by pressing kbd:[Ctrl+C].
+
+Once the deployment is complete you can now test the application and the
+persistent storage on Ceph.
+
+
+----
+oc get route rails-pgsql-persistent -n my-database-app -o jsonpath --template="http://{.spec.host}/articles{'\n'}"
+----
+
+This will return a route similar to this one:
+
+Copy your route (different than above) to a browser window to create articles.
+
+Enter the `username` and `password` below to create articles and comments.
+The articles and comments are saved in a PostgreSQL database which stores its
+table spaces on the Ceph RBD volume provisioned using the
+`ocs-storagecluster-ceph-rbd` *StorageClass* during the application
+deployment.
+
+----
+username: openshift
+password: secret
+----
+
+Lets now take another look at the Ceph `ocs-storagecluster-cephblockpool`
+created by the `ocs-storagecluster-ceph-rbd` *StorageClass*. Log into the
+*toolbox* pod again.
+
+
+# enable rook-ceph toolbox
+oc patch OCSInitialization ocsinit -n openshift-storage --type json --patch  '[{ "op": "replace", "path": "/spec/enableCephTools", "value": true }]'
+
+----
+TOOLS_POD=$(oc get pods -n openshift-storage -l app=rook-ceph-tools -o name)
+oc rsh -n openshift-storage $TOOLS_POD
+----
+
+Run the same Ceph commands as before the application deployment and compare
+to results in prior section. Notice the number of objects in
+`ocs-storagecluster-cephblockpool` has increased. The third command lists
+RBD volumes and we should now have two RBDs.
+
+
+----
+ceph df
+----
+
+----
+rados df
+----
+
+----
+rbd -p ocs-storagecluster-cephblockpool ls | grep vol
+----
+
+You can exit the toolbox by either pressing kbd:[Ctrl+D] or by executing exit.
+
+
+----
+exit
+----
+
+=== Matching PVs to RBDs
+
+A handy way to match OCP persistent volumes (*PVs*)to Ceph RBDs is to execute:
+
+
+----
+oc get pv -o 'custom-columns=NAME:.spec.claimRef.name,PVNAME:.metadata.name,STORAGECLASS:.spec.storageClassName,VOLUMEHANDLE:.spec.csi.volumeHandle'
+----
+.Example output:
+----
+NAME                      PVNAME                                     STORAGECLASS                  VOLUMEHANDLE
+ocs-deviceset-0-0-d2ppm   pvc-2c08bd9c-332d-11ea-a32f-061f7a67362c   gp2                           <none>
+ocs-deviceset-1-0-9tmc6   pvc-2c0a0ed5-332d-11ea-a32f-061f7a67362c   gp2                           <none>
+ocs-deviceset-2-0-qtbfv   pvc-2c0babb3-332d-11ea-a32f-061f7a67362c   gp2                           <none>
+db-noobaa-core-0          pvc-4610a3ce-332d-11ea-a32f-061f7a67362c   ocs-storagecluster-ceph-rbd   0001-0011-openshift-storage-0000000000000001-4a74e248-332d-11ea-9a7c-0a580a820205
+postgresql                pvc-874f93cb-3330-11ea-90b1-0a10d22e734a   ocs-storagecluster-ceph-rbd   0001-0011-openshift-storage-0000000000000001-8765a21d-3330-11ea-9a7c-0a580a820205
+rook-ceph-mon-a           pvc-d462ecb0-332c-11ea-a32f-061f7a67362c   gp2                           <none>
+rook-ceph-mon-b           pvc-d79d0db4-332c-11ea-a32f-061f7a67362c   gp2                           <none>
+rook-ceph-mon-c           pvc-da9cc0e3-332c-11ea-a32f-061f7a67362c   gp2                           <none>
+----
+
+The second half of the `VOLUMEHANDLE` column mostly matches what your RBD is
+named inside of Ceph. All you have to do is append `csi-vol-` to the front
+like this:
+
+.Get the full RBD name and the associated information for your postgreSQL *PV*
+
+----
+CSIVOL=$(oc get pv $(oc get pv | grep my-database-app | awk '{ print $1 }') -o jsonpath='{.spec.csi.volumeHandle}' | cut -d '-' -f 6- | awk '{print "csi-vol-"$1}')
+echo $CSIVOL
+----
+
+.Examplet output:
+----
+csi-vol-8765a21d-3330-11ea-9a7c-0a580a820205
+----
+
+
+----
+TOOLS_POD=$(oc get pods -n openshift-storage -l app=rook-ceph-tools -o name)
+
+# Corresponding representation in Ceph RBD
+oc rsh -n openshift-storage $TOOLS_POD rbd -p ocs-storagecluster-cephblockpool info $CSIVOL
+----
+
+.Example output:
+----
+rbd image 'csi-vol-8765a21d-3330-11ea-9a7c-0a580a820205':
+        size 5 GiB in 1280 objects
+        order 22 (4 MiB objects)
+        snapshot_count: 0
+        id: 17e811c7f287
+        block_name_prefix: rbd_data.17e811c7f287
+        format: 2
+        features: layering
+        op_features:
+        flags:
+        create_timestamp: Thu Jan  9 22:36:51 2020
+        access_timestamp: Thu Jan  9 22:36:51 2020
+        modify_timestamp: Thu Jan  9 22:36:51 2020
+----
+
+=== Expand RBD based PVCs
+
+OpenShift 4.5 and later versions let you expand an existing PVC based on the
+`ocs-storagecluster-ceph-rbd` *StorageClass*.
+
+We will first artificially fill up the PVC used by the application you have
+just created.
+
+----
+oc rsh -n my-database-app $(oc get pods -n my-database-app|grep postgresql | grep -v deploy | awk {'print $1}')
+----
+
+----
+df
+----
+.Example output:
+----
+Filesystem                           1K-blocks     Used Available Use% Mounted on
+overlay                              125277164 12004092 113273072  10% /
+tmpfs                                    65536        0     65536   0% /dev
+tmpfs                                 32571336        0  32571336   0% /sys/fs/cgroup
+shm                                      65536        8     65528   1% /dev/shm
+tmpfs                                 32571336    10444  32560892   1% /etc/passwd
+/dev/mapper/coreos-luks-root-nocrypt 125277164 12004092 113273072  10% /etc/hosts
+/dev/rbd1                              5095040    66968   5011688   2% /var/lib/pgsql/data
+tmpfs                                 32571336       28  32571308   1% /run/secrets/kubernetes.io/serviceaccount
+tmpfs                                 32571336        0  32571336   0% /proc/acpi
+tmpfs                                 32571336        0  32571336   0% /proc/scsi
+tmpfs                                 32571336        0  32571336   0% /sys/firmware
+----
+
+As observed in the output above the device named `/dev/rbd1`
+is mounted as `/var/lib/pgsql/data`. This is the directory we will artificially
+fill up.
+
+
+----
+dd if=/dev/zero of=/var/lib/pgsql/data/fill.up bs=1M count=3850
+----
+.Example output:
+----
+3850+0 records in
+3850+0 records out
+4037017600 bytes (4.0 GB) copied, 13.6446 s, 296 MB/s
+----
+
+Verify the volume mounted has increased.
+
+----
+df
+----
+.Example output:
+----
+Filesystem                           1K-blocks     Used Available Use% Mounted on
+overlay                              125277164 12028616 113248548  10% /
+tmpfs                                    65536        0     65536   0% /dev
+tmpfs                                 32571336        0  32571336   0% /sys/fs/cgroup
+shm                                      65536        8     65528   1% /dev/shm
+tmpfs                                 32571336    10444  32560892   1% /etc/passwd
+/dev/mapper/coreos-luks-root-nocrypt 125277164 12028616 113248548  10% /etc/hosts
+/dev/rbd1                              5095040  4009372   1069284  79% /var/lib/pgsql/data
+tmpfs                                 32571336       28  32571308   1% /run/secrets/kubernetes.io/serviceaccount
+tmpfs                                 32571336        0  32571336   0% /proc/acpi
+tmpfs                                 32571336        0  32571336   0% /proc/scsi
+tmpfs                                 32571336        0  32571336   0% /sys/firmware
+----
+
+As observed in the output above, the filesystem usage for `/var/lib/pgsql/data`
+has increased up to 79%. By default OCP will generate a PVC alert when a PVC
+crosses the 75% full threshold.
+
+Now exit the pod.
+
+
+----
+exit
+----
+
+==== Expand applying a modified PVC YAML file
+
+To expand a *PVC* we simply need to change the actual amount of storage that is
+requested. This can easily be performed by exporting the *PVC* specifications
+into a YAML file with the following command:
+
+
+----
+oc get pvc postgresql -n my-database-app -o yaml > pvc.yaml
+----
+
+In the file `pvc.yaml` that was created, search for the following section using
+your favorite editor.
+
+.Example output:
+[source,yaml]
+----
+[truncated]
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: ocs-storagecluster-ceph-rbd
+  volumeMode: Filesystem
+  volumeName: pvc-4d6838df-b4cd-4bb1-9969-1af93c1dc5e6
+status: {}
+----
+
+Edit `storage: 5Gi` and replace it with `storage: 10Gi`. The resulting section
+in your file should look like the output below.
+
+.Example output:
+[source,yaml]
+----
+[truncated]
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: ocs-storagecluster-ceph-rbd
+  volumeMode: Filesystem
+  volumeName: pvc-4d6838df-b4cd-4bb1-9969-1af93c1dc5e6
+status: {}
+----
+
+Now you can apply your updated PVC specifications using the following command:
+
+----
+oc apply -f pvc.yaml -n my-database-app
+----
+.Example output:
+----
+Warning: oc apply should be used on resource created by either oc create
+--save-config or oc apply persistentvolumeclaim/postgresql configured
+----
+
+You can visualize the progress of the expansion of the PVC using the following
+command:
+
+
+----
+oc describe pvc postgresql -n my-database-app
+----
+.Example output:
+----
+[truncated]
+Finalizers:    [kubernetes.io/pvc-protection]
+Capacity:      10Gi
+Access Modes:  RWO
+VolumeMode:    Filesystem
+Mounted By:    postgresql-1-p62vw
+Events:
+  Type     Reason                      Age   From                                                                                                                Message
+  ----     ------                      ----  ----                                                                                                                -------
+  Normal   ExternalProvisioning        120m  persistentvolume-controller                                                                                         waiting for a volume to be created, either by external provisioner "openshift-storage.rbd.csi.ceph.com" or manually created by system administrator
+  Normal   Provisioning                120m  openshift-storage.rbd.csi.ceph.com_csi-rbdplugin-provisioner-66f66699c8-gcm7t_3ce4b8bc-0894-4824-b23e-ed9bd46e7b41  External provisioner is provisioning volume for claim "my-database-app/postgresql"
+  Normal   ProvisioningSucceeded       120m  openshift-storage.rbd.csi.ceph.com_csi-rbdplugin-provisioner-66f66699c8-gcm7t_3ce4b8bc-0894-4824-b23e-ed9bd46e7b41  Successfully provisioned volume pvc-4d6838df-b4cd-4bb1-9969-1af93c1dc5e6
+  Warning  ExternalExpanding           65s   volume_expand                                                                                                       Ignoring the PVC: didn't find a plugin capable of expanding the volume; waiting for an external controller to process this PVC.
+  Normal   Resizing                    65s   external-resizer openshift-storage.rbd.csi.ceph.com                                                                 External resizer is resizing volume pvc-4d6838df-b4cd-4bb1-9969-1af93c1dc5e6
+  Normal   FileSystemResizeRequired    65s   external-resizer openshift-storage.rbd.csi.ceph.com                                                                 Require file system resize of volume on node
+  Normal   FileSystemResizeSuccessful  23s   kubelet, ip-10-0-199-224.us-east-2.compute.internal                                                                 MountVolume.NodeExpandVolume succeeded for volume "pvc-4d6838df-b4cd-4bb1-9969-1af93c1dc5e6"
+----
+
+NOTE: The expansion process commonly takes over 30 seconds to complete and is
+based on the workload of your pod. This is due to the fact that the expansion
+requires the resizing of the underlying RBD image (pretty fast) while also
+requiring the resize of the filesystem that sits on top of the block device. To
+perform the latter the filesystem must be quiesced to be safely expanded.
+
+CAUTION: Reducing the size of a *PVC* is NOT supported.
+
+Another way to check on the expansion of the *PVC* is to simply display the
+*PVC* information using the following command:
+
+
+----
+oc get pvc -n my-database-app
+----
+.Example output:
+----
+NAME         STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS                  AGE
+postgresql   Bound    pvc-4d6838df-b4cd-4bb1-9969-1af93c1dc5e6   10Gi       RWO            ocs-storagecluster-ceph-rbd   121m
+----
+
+NOTE: The `CAPACITY` column will reflect the new requested size when the
+expansion process is complete.
+
+Another method to check on the expansion of the *PVC* is to go through two
+specific fields of the PVC object via the CLI.
+
+The current allocated size for the *PVC* can be checked this way:
+
+
+----
+echo $(oc get pvc postgresql -n my-database-app -o jsonpath='{.status.capacity.storage}')
+----
+.Example output:
+----
+10Gi
+----
+
+The requested size for the *PVC* can be checked this way:
+
+
+----
+echo $(oc get pvc postgresql -n my-database-app -o jsonpath='{.spec.resources.requests.storage}')
+----
+.Example output:
+----
+10Gi
+----
+
+NOTE: When both results report the same value, the expansion was successful.
+
+==== Expand via the User Interface
+
+The last method available to expand a *PVC* is to do so through the *OpenShift
+Web Console*. Proceed as follow:
+
+First step is to select the project to which the *PVC* belongs to.
+
+
+Choose `Expand PVC` from the contextual menu.
+
+
+In the dialog box that appears enter the new capacity for the *PVC*.
+
+CAUTION: You can NOT reduce the size of a *PVC*.
+
+.Enter the new size for the *PVC*
+
+You now simply have to wait for the expansion to complete and for the new size
+to be reflected in the console (15 GiB).

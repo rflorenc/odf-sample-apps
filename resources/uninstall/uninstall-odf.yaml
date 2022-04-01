@@ -1,0 +1,67 @@
+# https://access.redhat.com/articles/6525111
+# The recommended to gracefully shutdown ODF is as explained in above article.
+
+# Use this ansible playbook only when you are certain all mount points and
+# references to odf volumes / pvcs are cleared.
+
+# When namespace is stuck "Terminating"
+# Check for pending resources to be finalized in the namespace status.
+
+---
+- hosts: localhost
+  vars:
+    noobaa_namespace: openshift-storage
+    logfile: /tmp/noobaa_uninstall.log
+
+  tasks:
+  - name: Uninstall
+    block:
+      - name: Delete namespaces
+        shell: oc delete ns {{ item }} &> /dev/null
+        loop:
+          - minio-operator
+          - velero
+
+      - name: Patch CRD finalizers
+        shell: >
+          oc patch bucketstore -n {{ noobaa_namespace }} --type=merge -p '{"metadata":{"finalizers":null}}' noobaa-default-bucket-store;
+          oc patch bucketclass -n {{ noobaa_namespace }} --type=merge -p '{"metadata":{"finalizers":null}}' noobaa-default-bucket-class;
+          oc patch noobaa -n {{ noobaa_namespace }} --type=merge -p '{"metadata":{"finalizers":null}}' noobaa;
+          oc -n {{ noobaa_namespace }} patch storagecluster --type=merge -p '{"metadata":{"finalizers":null}}' ocs-storagecluster;
+
+          for resource in cephblockpoolusers cephblockpool cephcluster cephfilesystem storagecluster storagesystem;
+          do
+          oc -n {{ noobaa_namespace }} patch $resource --type=merge -p '{"metadata":{"finalizers":null}}' ocs-storagecluster-${resource};
+          done
+
+      - name: Patch pvc finalizers
+        shell: >
+          for pvc in `oc get pvc -o jsonpath='{.items[*].metadata.name}' -n {{ noobaa_namespace }}`;
+          do
+          oc patch pvc -n {{ noobaa_namespace }} --type=merge -p '{"metadata":{"finalizers":null}}' $pvc;
+          done
+
+      - name: Patch pod finalizers
+        shell: >
+          for pod in `oc get pods -o jsonpath='{.items[*].metadata.name}' -n {{ noobaa_namespace }}`;
+          do
+          oc patch pod -n {{ noobaa_namespace }} --type=merge -p '{"metadata":{"finalizers":null}}' $pod;
+          oc delete pod noobaa-db-pg-0 --force --grace-period=0;
+          done
+
+      - name: Remove logfile
+        file:
+          state: absent
+          path: "{{ logfile }}"
+
+      - name: Run Noobaa uninstall (Linux)
+        shell: >
+          noobaa uninstall --cleanup=true -n {{ noobaa_namespace }} >> {{ logfile }} 2>&1
+        when: ansible_distribution == 'RedHat' or ansible_distribution == 'CentOS' or ansible_distribution == 'Fedora'
+
+      - name: Run Noobaa uninstall (MacOSX)
+        shell: >
+          noobaa uninstall --cleanup=true -n {{ noobaa_namespace }} >> {{ logfile }} 2>&1
+        when: ansible_distribution == 'MacOSX'
+
+    ignore_errors: true

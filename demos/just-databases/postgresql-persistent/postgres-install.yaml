@@ -1,0 +1,111 @@
+- hosts: localhost
+  gather_facts: False
+  tasks:
+    - name: Create a namespace
+      tags:
+        - namespace
+      k8s:
+        state: present
+        kubeconfig: "{{ lookup('env', 'KUBECONFIG') }}"
+        definition:
+          apiVersion: v1
+          kind: namespace
+          metadata:
+            name: postgresql-persistent
+            labels:
+              app: postgresql
+
+
+    - name: Create a ConfigMap
+      tags:
+        - configmap
+      k8s:
+        state: present
+        kubeconfig: "{{ lookup('env', 'KUBECONFIG') }}"
+        definition:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: postgresql
+            namespace: postgresql-persistent
+            labels:
+              app: postgresql
+          data:
+            POSTGRESQL_DATABASE: sampledb
+            POSTGRESQL_USER: admin
+            POSTGRESQL_PASSWORD: password
+
+
+    - name: Claim a persistent volume claim
+      tags:
+        - pvclaim
+      k8s:
+        state: present
+        kubeconfig: "{{ lookup('env', 'KUBECONFIG') }}"
+        definition:
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            name: postgresql
+            namespace: postgresql-persistent
+          spec:
+            storageClassName: gp2
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 2Gi
+
+    - name: Create a Deployment
+      tags:
+        - deployment
+      k8s:
+        state: present
+        kubeconfig: "{{ lookup('env', 'KUBECONFIG') }}"
+        src: deployment.yaml
+
+    - name: Create a Service object
+      tags:
+        - service
+      k8s:
+        state: present
+        kubeconfig: "{{ lookup('env', 'KUBECONFIG') }}"
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: postgresql
+            namespace: postgresql-persistent
+            labels:
+              app: postgresql
+          spec:
+            selector:
+              app: postgresql
+            ports:
+            - protocol: TCP
+              name: postgresql
+              port: 5432
+
+    - name: Create a Route
+      tags:
+        - route
+      k8s:
+        state: present
+        kubeconfig: "{{ lookup('env', 'KUBECONFIG') }}"
+        definition:
+          apiversion: v1
+          kind: Route
+          metadata:
+            name: postgresql
+            namespace: postgresql-persistent
+            labels:
+              app: postgresql
+              service: postgresql
+          spec:
+            to:
+              kind: Service
+              name: postgresql
+            port:
+              targetPort: postgresql
+
+
